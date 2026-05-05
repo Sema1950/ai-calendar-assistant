@@ -34,11 +34,18 @@ Pending state (from Data Table — authoritative when present):
   status: $json.status || null
 }) }}
 
+Pending context:
+{{ $json.pending_context || null }}
+
 # Source-of-truth priority
 When sources disagree, use this order:
 1. The current user message (highest priority).
 2. Pending state (Data Table) — authoritative for unfinished multi-turn flows.
 3. Simple Memory (conversational history) — context only, not authoritative.
+
+If `pending_context` exists, use it as the clearest explanation of what the user is replying to.
+The pending_context explains the previous workflow question and the latest user reply.
+Use it to decide whether the user confirmed, rejected, selected an option, changed the request, or needs clarification.
 
 If `pending_action` is null, ignore Pending state entirely.
 
@@ -139,14 +146,59 @@ The user is responding to a previous "replace conflicting events?" question. Cla
 
 # Pending cancel decisions
 
-If pending_action = "confirm_cancel" and the user clearly confirms, return:
-intent = "cancel", pending_intent = "cancel", confirmed = true, needs_clarification = false, memory_used = true.
+If pending_action = "confirm_cancel", the user is replying to a previous delete confirmation question.
 
-If pending_action = "select_cancel_target" and the user replies with a number or "all", return:
-intent = "cancel", pending_intent = "cancel", confirmed = true, needs_clarification = false, memory_used = true.
+Use pending_context if available.
 
-If pending_action = "confirm_cancel" or pending_action = "select_cancel_target" and the reply is unclear, return:
-intent = "clarification", pending_intent = "cancel", confirmed = false, needs_clarification = true, memory_used = true.
+- If the user clearly confirms deletion:
+  intent = "cancel"
+  pending_intent = "cancel"
+  confirmed = true
+  needs_clarification = false
+  memory_used = true
+
+- If the user rejects deletion, changes their mind, says no, says not to delete, or gives any negative reply:
+  intent = "clarification"
+  pending_intent = "cancel"
+  confirmed = false
+  needs_clarification = true
+  memory_used = true
+  clarification_question = "Okay, I won’t delete it. What would you like to do instead?"
+
+- If the reply is unclear:
+  intent = "clarification"
+  pending_intent = "cancel"
+  confirmed = false
+  needs_clarification = true
+  memory_used = true
+  clarification_question = "Just to confirm, do you want me to delete this event?"
+
+If pending_action = "select_cancel_target", the user is replying to a list of cancel options.
+
+Use pending_context if available.
+
+- If the user replies with a valid number or "all":
+  intent = "cancel"
+  pending_intent = "cancel"
+  confirmed = true
+  needs_clarification = false
+  memory_used = true
+
+- If the user rejects deletion:
+  intent = "clarification"
+  pending_intent = "cancel"
+  confirmed = false
+  needs_clarification = true
+  memory_used = true
+  clarification_question = "Okay, I won’t delete anything. What would you like to do instead?"
+
+- If the reply is unclear:
+  intent = "clarification"
+  pending_intent = "cancel"
+  confirmed = false
+  needs_clarification = true
+  memory_used = true
+  clarification_question = "Which event should I delete? Please reply with a number, or say all."
 
 # Date and time inference
 
@@ -183,7 +235,9 @@ Time format ambiguity:
 
 - `replace_conflicts_decision`, `confirm_cancel`, and `select_cancel_target` are Data Table `pending_action` values only.
 - Do not add these values to the Structured Output Parser enum.
-- If future testing shows weak classification on pending cancel replies, add deterministic Code override after the AI Agent.
+- Positive pending cancel confirmation has been tested.
+- Negative and unclear pending cancel replies are now explicitly handled in the prompt.
+- Deterministic Code safety should still protect destructive delete actions.
 
 
 ## Latest Prompt Status — Pending Cancel Works
@@ -214,14 +268,8 @@ AI output was correct:
 }
 ```
 
-No prompt change is required right now for positive confirmation.
+Positive pending cancel confirmation has been tested.
 
-Future prompt improvement still needed:
+Negative and unclear pending cancel replies are now explicitly handled in the prompt.
 
-```text
-Handle negative replies more explicitly:
-no
-cancel
-do not delete
-never mind
-```
+Deterministic Code safety should still protect destructive delete actions.

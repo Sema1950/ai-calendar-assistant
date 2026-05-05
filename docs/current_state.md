@@ -916,3 +916,13 @@ calendar error handling
 availability branch
 fallback branch
 ```
+
+## Latest Update — Pending Context Design Decision
+
+- A new design decision was made to add a `pending_context` field before the AI Agent.
+- The purpose is to make pending user replies easier for the AI Agent to classify.
+- This is especially important for cancel confirmation replies such as "no", unclear replies, and multiple-choice cancel selection.
+- Data Table remains the source of truth.
+- AI Agent interprets the user reply.
+- Code/IF nodes must still protect destructive actions such as delete and replace.
+- Next practical build step: add a Code/Edit Fields node before the AI Agent to generate `pending_context` when `pending_action` exists.

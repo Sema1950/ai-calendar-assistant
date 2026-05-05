@@ -1018,3 +1018,63 @@ Data Table Delete Row(s)
 → IF row still exists
 → Telegram/internal error message
 ```
+
+## 39. Build Clear `pending_context` for AI Replies
+
+### Decision
+
+When `pending_action` exists, build a human-readable `pending_context` before the AI Agent.
+
+### Reason
+
+AI handles language better when it receives the previous question and current reply in plain language, not only raw Data Table columns.
+
+### Final Direction
+
+```text
+pending_action exists
+→ build pending_context before AI Agent
+→ AI Agent interprets reply using pending_context
+→ Code node safety-checks destructive actions
+→ workflow continues
+```
+
+Applies to:
+
+```text
+booking conflict replacement
+reschedule multiple replacement
+cancel confirmation
+cancel multiple selection
+future approval-style branches
+```
+
+Core rule:
+
+```text
+AI understands the user's reply.
+Code protects the action.
+Data Table stores the truth.
+```
+
+## 40. Code Must Protect Destructive Actions Even When AI Decides Meaning
+
+### Decision
+
+The AI Agent may decide whether the user confirmed, rejected, selected, or needs clarification.
+
+However, destructive actions must still be protected by deterministic Code or IF logic.
+
+### Final Direction
+
+Deleting/replacing calendar events must only happen when:
+
+```text
+pending_action is valid
+confirmation is true
+saved event ID(s) exist in Data Table
+```
+
+Google Calendar Delete must use saved Data Table IDs, not AI-generated IDs or a new search.
+
+When unclear, route to clarification and do not delete.

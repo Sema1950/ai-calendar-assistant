@@ -323,6 +323,60 @@ Detect situation requiring confirmation
 → delete pending row
 ```
 
+## Pending Context Architecture
+
+When a pending Data Table row exists, the workflow should build a clear `pending_context` field before the AI Agent.
+
+Purpose:
+
+Make the previous workflow question easy for the AI Agent to understand.
+
+Raw Data Table fields remain the source of truth for Code nodes, but `pending_context` helps the AI interpret the latest user reply.
+
+Example `pending_context`:
+
+```text
+The user was asked to confirm deleting this event:
+Title: Dinner
+Time: 8:00 PM - 8:45 PM
+Pending action: confirm_cancel
+
+The latest user reply is:
+no
+
+Classify the latest reply in relation to this pending action.
+```
+
+Pattern:
+
+```text
+Telegram Trigger
+→ Edit Fields
+→ Data Table: Get pending row
+→ Merge
+→ Code/Edit Fields: Build pending_context
+→ AI Agent
+→ Structured Output Parser
+→ Code override / safety validation
+→ Main Switch
+```
+
+Applies to:
+
+```text
+replace_conflicts_decision
+confirm_cancel
+select_cancel_target
+```
+
+Core rule:
+
+```text
+AI understands the reply.
+Code protects destructive actions.
+Data Table remains the source of truth.
+```
+
 ## Clarification Branch
 
 ### Purpose

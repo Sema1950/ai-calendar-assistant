@@ -12,6 +12,42 @@ Finish the **cancel branch**.
 
 The cancel branch is partially built but not complete.
 
+## Add Pending Context Before AI Agent
+
+### Goal
+
+Build a clear `pending_context` field before the AI Agent whenever a pending Data Table row exists.
+
+### Required for
+
+```text
+replace_conflicts_decision
+confirm_cancel
+select_cancel_target
+```
+
+### Purpose
+
+Help the AI Agent understand what the user is replying to.
+
+Example:
+
+```text
+The user was asked to confirm deleting this event:
+Title: Dinner
+Time: 8:00 PM - 8:45 PM
+Pending action: confirm_cancel
+
+The latest user reply is:
+no
+
+Classify the latest reply in relation to this pending action.
+```
+
+### Priority
+
+Do this before continuing with more cancel edge cases.
+
 ## 1. Finish Cancel Branch
 
 ### Current Cancel Structure
