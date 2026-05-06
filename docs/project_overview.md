@@ -19,6 +19,14 @@ The goal is to allow natural-language scheduling commands such as:
 
 The system is designed to feel conversational while keeping all calendar actions controlled, traceable, and safe.
 
+## ChatGPT Project Instructions
+
+This project includes a dedicated instruction file for ChatGPT project behavior:
+
+```text
+/docs/chatgpt_project_instructions.md
+```
+
 ## Main Goal
 
 The main goal is to build a reliable AI-assisted scheduling assistant that can:
