@@ -23,9 +23,19 @@ The system is designed to feel conversational while keeping all calendar actions
 
 This project includes a dedicated instruction file for ChatGPT project behavior:
 
-```text
 /docs/chatgpt_project_instructions.md
-```
+
+Purpose:
+
+Defines how ChatGPT should work inside this project.
+Requires reading current project state before giving build instructions.
+Enforces one-step-at-a-time guidance.
+Enforces exact n8n node field instructions.
+Keeps AI Agent logic separate from deterministic workflow execution.
+
+This file is for ChatGPT project operation only.
+
+It does not change the n8n workflow architecture, AI Agent prompt, Structured Output Parser schema, or Data Table schema.
 
 ## Main Goal
 
