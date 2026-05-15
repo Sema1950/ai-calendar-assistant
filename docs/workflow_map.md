@@ -234,8 +234,8 @@ Telegram reply yes
 → Conflict Memory finds confirm_cancel
 → AI Agent returns cancel confirmed true
 → Delete target_event_id
-→ Telegram: Deleted
 → Data Table: Delete pending row
+→ Telegram: Deleted confirmation
 → STOP
 ```
 
