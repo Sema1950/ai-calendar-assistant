@@ -1,0 +1,2455 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        800,
+        -48
+      ],
+      "id": "defacc8d-519b-42ca-b212-ce128e1054c8",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "KtVyLBouZ5KIlWUq",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=# Role\nYou are a scheduling-intent router inside an n8n workflow.\n\nYour only job: classify the user's Telegram message and extract structured scheduling data into the output schema.\n\nYou do NOT create, delete, update, or check calendar events. Downstream n8n nodes do all calendar work. You only label and extract.\n\n# Runtime context\n\nCurrent datetime: {{ $now.setZone('America/Edmonton').toFormat('yyyy-MM-dd HH:mm ZZZZ') }}\nTimezone: America/Edmonton\nDefault meeting duration: 30 minutes\n\nUser message:\n{{ $json.chatInput }}\n\nSession ID: {{ $json.sessionId }}\n\nPending state (from Data Table — authoritative when present):\n{{ JSON.stringify({\n  pending_action: $json.pending_action || null,\n  saved_title: $json.title || null,\n  saved_start: $json.start_datetime || null,\n  saved_end: $json.end_datetime || null,\n  conflicting_event_ids: $json.conflicting_event_ids || null,\n  status: $json.status || null\n}) }}\n\nPending context:\n{{ $json.pending_context || null }}\n\n# Source-of-truth priority\nWhen sources disagree, use this order:\n1. The current user message (highest priority).\n2. Pending state (Data Table) — authoritative for unfinished multi-turn flows.\n3. Simple Memory (conversational history) — context only, not authoritative.\n\nIf `pending_action` is null, ignore Pending state entirely.\nIf `pending_context` exists, use it as the clearest explanation of what the user is replying to. Use it to decide whether the user confirmed, rejected, selected an option, changed the request, or needs clarification.\n\n# Output schema\nReturn exactly these fields. The Structured Output Parser enforces types.\n\n- intent: \"booking\" | \"reschedule\" | \"cancel\" | \"show_schedule\" | \"availability\" | \"clarification\"\n- pending_intent: same enum as intent, or null. The original intent still waiting for confirmation.\n- confirmed: boolean. True only when the current message explicitly confirms a previously proposed action.\n- needs_clarification: boolean. Drives Switch routing — set true whenever required fields are missing or the request is ambiguous.\n- clarification_question: string or null. Required when needs_clarification = true.\n- title: string or null. The new event title (for booking and reschedule).\n- event_search_text: string or null. Description of the existing event to find (for cancel and reschedule Type A).\n- original_datetime: ISO datetime or null. Start time of the existing event (for cancel and reschedule).\n- start_datetime: ISO datetime or null. New event start (booking only).\n- end_datetime: ISO datetime or null. New event end (booking only).\n- new_start_datetime: ISO datetime or null. New event start (reschedule only).\n- new_end_datetime: ISO datetime or null. New event end (reschedule only).\n- range_start_datetime: ISO datetime or null. Start of range (show_schedule, availability).\n- range_end_datetime: ISO datetime or null. End of range (show_schedule, availability).\n- email: string or null. Only if the user provides one.\n- timezone: always \"America/Edmonton\".\n- memory_used: boolean. True only if a value from Pending state was copied into an output field or directly determined the chosen intent.\n- confidence: number 0.0–1.0. Logging only — does not control routing.\n\n# Hard rules\n\n- Always output ISO 8601 datetimes with America/Edmonton offset.\n- Never invent names, emails, event IDs, or event titles.\n- Never put workflow sub-states (like `replace_conflicts_decision`) into `pending_intent`. That field accepts only the intent enum or null.\n- If a required field is missing or ambiguous, set `intent = \"clarification\"`, `needs_clarification = true`, and provide one short `clarification_question`. Set `pending_intent` to the underlying intent the user is trying to express.\n\n# Intent definitions\n\n## booking\nUser wants a new event without replacing/clearing existing ones.\nRequired: title, start_datetime.\nDefaults: title → \"Meeting\" if missing. end_datetime → start + 30 min if missing.\nIf date or time is missing, return clarification.\n\n## reschedule\nUser wants to change, replace, clear, or overwrite existing event(s) and create a new one.\nTwo sub-types — pick by inspecting the message:\n\n- **Type A — specific event named:** user identifies one existing event and gives new details.\n  Set: event_search_text, original_datetime (if given), title, new_start_datetime, new_end_datetime.\n\n- **Type B — replace events in a time range:** user wants to clear/overwrite whatever is in a window with a new event.\n  Set: event_search_text = null, title, new_start_datetime, new_end_datetime.\n\nDecision rule: if you cannot extract `event_search_text` from the message, use Type B.\n\nReschedule is ONE intent even though it deletes + creates. Do not treat it as multi-intent.\n\n## cancel\nUser wants to delete/remove/cancel an event without creating a new one.\nRequired: at least one of (event_search_text, original_datetime).\nIf only a time is given without a date, ask: \"What date should I delete this from?\"\nIf only a date is given without an event identifier, ask: \"Which event should be cancelled?\"\n\n## show_schedule\nUser wants to see calendar events.\nRequired: range_start_datetime, range_end_datetime.\nDefault: today 00:00:00 to 23:59:59 America/Edmonton.\n\n## availability\nUser asks whether a time is free.\nRequired: range_start_datetime, range_end_datetime.\nIf the range is unclear, ask clarification.\n\n## clarification\nRequired information missing or message ambiguous. Ask one short question. Preserve known fields. Set `pending_intent` to the intent the user was trying to express.\n\n# Multi-intent\nIf the user requests two or more *distinct* actions in one message (e.g., \"cancel my 3pm and book dinner at 7\"), return `intent = \"clarification\"` and ask which to handle first.\n\nReschedule (delete + create on same event) is NOT multi-intent.\n\n# Pending conflict decision (when pending_action = \"replace_conflicts_decision\")\n\nThe user is responding to a previous \"replace conflicting events?\" question. Classify their reply:\n\n- **Agreement** (\"yes\", \"replace them\", \"go ahead\", \"do it\", \"remove them\"):\n  intent = \"reschedule\", pending_intent = \"reschedule\", confirmed = true,\n  needs_clarification = false, memory_used = true.\n  Use the saved title and saved start/end from Pending state.\n\n- **New time given instead of yes/no** (user is abandoning replacement, trying a different time):\n  intent = \"booking\", pending_intent = \"booking\", confirmed = false,\n  needs_clarification = false, memory_used = true.\n  Use saved title from Pending state. Use new datetime from current message.\n  (Note: a downstream Code node also enforces this — your output here is the first line of defense.)\n\n- **Anything else**:\n  intent = \"clarification\", pending_intent = \"reschedule\", confirmed = false,\n  needs_clarification = true, memory_used = true,\n  clarification_question = \"Do you want me to replace the conflicting events, or should I try a different time?\"\n\n# Pending cancel decisions\n\nIf pending_action = \"confirm_cancel\", the user is replying to a delete confirmation question.\nUse pending_context if available.\n- Clear yes / approval:\n  intent = \"cancel\", pending_intent = \"cancel\", confirmed = true, needs_clarification = false, memory_used = true.\n- Clear no / rejection / changed mind:\n  intent = \"clarification\", pending_intent = \"cancel\", confirmed = false, needs_clarification = true, memory_used = true,\n  clarification_question = \"Okay, I won’t delete it. What would you like to do instead?\"\n- Unclear reply:\n  intent = \"clarification\", pending_intent = \"cancel\", confirmed = false, needs_clarification = true, memory_used = true,\n  clarification_question = \"Just to confirm, do you want me to delete this event?\"\nIf pending_action = \"select_cancel_target\", the user is replying to a list of cancel options.\n- Number or \"all\":\n  intent = \"cancel\", pending_intent = \"cancel\", confirmed = true, needs_clarification = false, memory_used = true.\n- No / rejection / unclear reply:\n  intent = \"clarification\", pending_intent = \"cancel\", confirmed = false, needs_clarification = true, memory_used = true,\n  clarification_question = \"Which event should I delete? Please reply with a number, or say all.\"\n\n# Date and time inference\n\nTokens:\n- today, tomorrow → current/next calendar day in America/Edmonton.\n- next Monday/Tuesday/etc. → next future occurrence of that weekday.\n- this weekend → if today is Mon–Fri, upcoming Sat 00:00 to Sun 23:59. If today is Sat or Sun, the current weekend.\n- morning = 09:00, afternoon = 13:00, evening = 18:00 (use as start time).\n\nTime ranges (\"between 5 and 11 PM\", \"5-11 PM\", \"from 5 to 11 PM\"):\nUse first time as start, second as end. Do NOT apply 30-min default duration when a range is given.\n\nTime format ambiguity:\n- 24-hour format (e.g., \"14:00\", \"21:30\") is unambiguous — never request clarification.\n- AM/PM specified (e.g., \"5 PM\") is unambiguous.\n- Bare hour without AM/PM (e.g., \"book at 5\"):\n  - If the resulting time would be in the past for today's date, ask clarification.\n  - If the date is in the future, prefer PM for hours 1–7 in business context.\n  - If still ambiguous, ask clarification.\n\n# Edge cases\n\n- Empty, off-topic, or garbage messages (e.g., \"hi\", emoji only): return intent = \"clarification\", clarification_question = \"How can I help with your schedule?\"\n- Past datetimes for booking/reschedule: ask clarification — the request cannot be fulfilled.\n- Email: extract only if the user provides one explicitly. Otherwise null.\n- confirmed = true only when the current message explicitly confirms a previously proposed action. First-time requests are always confirmed = false.\n\n# Output behavior\n- Return only the structured fields. No prose. No markdown. No explanation.\n- The Switch node routes on `intent` and `needs_clarification`. Get those two right above all else."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        848,
+        -240
+      ],
+      "id": "5d9777a4-9ae9-40b4-bbe3-840b86f5b1d1",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "61181dc8-f2db-49c5-978d-0ed6193ea7cf",
+              "name": "chatInput",
+              "value": "={{$json.message.text}}",
+              "type": "string"
+            },
+            {
+              "id": "3e657efa-cdcf-4045-b1e4-8d9f5b710e5a",
+              "name": "sessionId",
+              "value": "={{$json.message.chat.id}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        32,
+        -224
+      ],
+      "id": "66c1777b-99b4-4a21-98f7-7044ddc72b6c",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        928,
+        0
+      ],
+      "id": "c58b5f76-095e-4bd6-82e6-382c5b13e8df",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"intent\": {\n      \"type\": \"string\",\n      \"enum\": [\"booking\", \"reschedule\", \"cancel\", \"show_schedule\", \"availability\", \"clarification\"]\n    },\n    \"pending_intent\": {\n      \"type\": [\"string\", \"null\"],\n      \"enum\": [\"booking\", \"reschedule\", \"cancel\", \"show_schedule\", \"availability\", \"clarification\", null]\n    },\n    \"confirmed\": { \"type\": \"boolean\" },\n    \"needs_clarification\": { \"type\": \"boolean\" },\n    \"clarification_question\": { \"type\": [\"string\", \"null\"] },\n    \"title\": { \"type\": [\"string\", \"null\"] },\n    \"event_search_text\": { \"type\": [\"string\", \"null\"] },\n    \"original_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"start_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"end_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"new_start_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"new_end_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"range_start_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"range_end_datetime\": { \"type\": [\"string\", \"null\"] },\n    \"email\": { \"type\": [\"string\", \"null\"] },\n    \"timezone\": { \"type\": \"string\", \"enum\": [\"America/Edmonton\"] },\n    \"memory_used\": { \"type\": \"boolean\" },\n    \"confidence\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 1 }\n  },\n  \"required\": [\n    \"intent\",\n    \"pending_intent\",\n    \"confirmed\",\n    \"needs_clarification\",\n    \"clarification_question\",\n    \"title\",\n    \"event_search_text\",\n    \"original_datetime\",\n    \"start_datetime\",\n    \"end_datetime\",\n    \"new_start_datetime\",\n    \"new_end_datetime\",\n    \"range_start_datetime\",\n    \"range_end_datetime\",\n    \"email\",\n    \"timezone\",\n    \"memory_used\",\n    \"confidence\"\n  ],\n  \"additionalProperties\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1056,
+        -48
+      ],
+      "id": "8f6ab763-0379-48f5-b84a-71fc0ba125df",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output.needs_clarification.toString() }}",
+                    "rightValue": "true",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "65d74edc-524a-4126-ab9b-492c9964ade8"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "clarification_priority"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ab5b0da5-692f-4913-80f8-96d1ba1df93a",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "reschedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reschedule"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "cd1a1f28-1e4b-472d-b7f0-1cc6574c3666",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancel"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "cb2c5231-8948-4a8f-b7fd-ff863d0e3cfc",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "=show_schedule",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "show_schedule"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "121e65a0-1c35-473b-b8be-81f96f7be99c",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "availability",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c9cd0fe1-ca05-4302-af45-e79b5d32b1aa",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "clarification",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "clarification"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ba65c10b-c032-4642-b4d4-d1410aa9d7af",
+                    "leftValue": "={{ $json[\"output\"][\"intent\"] }}",
+                    "rightValue": "booking",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "booking"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        -336
+      ],
+      "id": "440ceb6b-3c5b-40d8-b743-17c56506ef7e",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "timeMin": "={{ $json.output.range_start_datetime }}",
+        "timeMax": "={{ $json.output.range_end_datetime }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1728,
+        832
+      ],
+      "id": "7f4d2fc3-6b54-4fd9-b918-b6455913305b",
+      "name": "Schedule check",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = items\n  .filter(item => item.json && Object.keys(item.json).length > 0)\n  .sort((a, b) => {\n    const aStart = a.json.start?.dateTime || a.json.start?.date || \"\";\n    const bStart = b.json.start?.dateTime || b.json.start?.date || \"\";\n    return aStart.localeCompare(bStart);\n  });\n\nconst scheduleDate = DateTime\n  .fromISO($('Switch').item.json.output.range_start_datetime)\n  .setZone('America/Edmonton')\n  .toFormat('MMMM d, yyyy');\n\nif (!events.length) {\n  return [{\n    json: {\n      message: `Your schedule for ${scheduleDate} is empty.`\n    }\n  }];\n}\n\nconst lines = events.map(event => {\n  const start = event.json.start?.dateTime || event.json.start?.date;\n  const end = event.json.end?.dateTime || event.json.end?.date;\n  const title = event.json.summary || \"No title\";\n\n  const startTime = start?.includes(\"T\") ? start.slice(11, 16) : \"All day\";\n  const endTime = end?.includes(\"T\") ? end.slice(11, 16) : \"\";\n\n  return endTime\n    ? `${startTime} - ${endTime} | ${title}`\n    : `${startTime} | ${title}`;\n});\n\nreturn [{\n  json: {\n    message: `Your schedule for ${scheduleDate}:\\n\\n${lines.join(\"\\n\")}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1888,
+        832
+      ],
+      "id": "1d7d2766-1150-4ec2-ab13-0eefaca632bb",
+      "name": "Create message"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.from.id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2048,
+        832
+      ],
+      "id": "c84141b1-9ddb-4810-abfb-05772b3b8480",
+      "name": "Send a text message1",
+      "webhookId": "835715a3-1934-4558-91a5-0dd970db7c80",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Checking the schedule workflow",
+        "height": 224,
+        "width": 560,
+        "color": "#2B4037"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        784
+      ],
+      "id": "563be81f-3bb4-4bc9-808b-c306d701578c",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "timeMin": "={{ $json.output.start_datetime }}",
+        "timeMax": "={{ $json.output.end_datetime }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        1120
+      ],
+      "id": "224358c6-550d-4ad1-925b-67a81dfe8472",
+      "name": "Schedule check1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Clarification question\n",
+        "height": 224,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        -816
+      ],
+      "id": "020a0158-6782-4261-9cd2-7ace9a7dc38d",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        432,
+        -240
+      ],
+      "id": "273252e9-8ec5-4525-8b5c-b9c28c09161b",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sessionId",
+              "keyValue": "={{ $json.sessionId }}"
+            },
+            {
+              "keyName": "status",
+              "keyValue": "waiting_for_user"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        208,
+        -384
+      ],
+      "id": "bbecad55-96f4-45e6-b2a7-9ac6d7205f11",
+      "name": "Conflict Memory",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "pending_action": "replace_conflicts_decision",
+            "title": "={{ $('Switch').item.json.output.title }}",
+            "start_datetime": "={{ $('Switch').item.json.output.start_datetime }}",
+            "end_datetime": "={{ $('Switch').item.json.output.end_datetime }}",
+            "conflicting_event_ids": "={{ JSON.stringify($json.conflictingEvents.map(e => e.id)) }}",
+            "status": "waiting_for_user",
+            "created_at": "={{ $now.setZone('America/Edmonton').toISO() }}",
+            "sessionId": "={{ $('Telegram Trigger').item.json.message.chat.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pending_action",
+              "displayName": "pending_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "start_datetime",
+              "displayName": "start_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "end_datetime",
+              "displayName": "end_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "conflicting_event_ids",
+              "displayName": "conflicting_event_ids",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2416,
+        1056
+      ],
+      "id": "019be7d2-6952-4b09-bb20-521bb51ee1e4",
+      "name": "Conflict Add event"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.sessionId }}",
+        "text": "={{ $('Text normalisation').item.json.conflictMessage }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2576,
+        1056
+      ],
+      "id": "eb005291-151e-4997-87fd-9a4bd70496c2",
+      "name": "Send question",
+      "webhookId": "835715a3-1934-4558-91a5-0dd970db7c80",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.output.clarification_question }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1744,
+        -752
+      ],
+      "id": "d758d320-4178-47fe-ac4b-c797ae0ced3d",
+      "name": "Clarification",
+      "webhookId": "63a4954b-afda-4b77-a266-97ce38a2dbb4",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7cc9a956-1e0b-444c-900b-6e91d33efe22",
+              "leftValue": "={{ $json.hasConflict }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        1120
+      ],
+      "id": "c197c1da-8f1a-432e-9018-4624da5567db",
+      "name": "If overlap in schedule"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = items;\n\n// Only real Google Calendar events should count as conflicts.\n// Booking data from Switch/Merge is not a conflict.\nconst events = allItems.filter(item => {\n  const event = item.json || {};\n  return Boolean(\n    event.id &&\n    event.start &&\n    event.end &&\n    (event.start.dateTime || event.start.date) &&\n    (event.end.dateTime || event.end.date)\n  );\n});\n\nconst hasConflict = events.length > 0;\n\nconst formatTime = (dateString) => {\n  if (!dateString) return \"unknown time\";\n\n  // Handles ISO datetime like 2026-05-01T15:00:00-06:00\n  if (dateString.includes(\"T\")) {\n    return dateString.slice(11, 16);\n  }\n\n  // Handles all-day date like 2026-05-01\n  return dateString;\n};\n\nconst conflictLines = events.map((item, index) => {\n  const event = item.json;\n\n  const title = event.summary || \"No title\";\n  const start = formatTime(event.start?.dateTime || event.start?.date);\n  const end = formatTime(event.end?.dateTime || event.end?.date);\n\n  return `${index + 1}) ${start} - ${end} | ${title}`;\n});\n\nconst conflictMessage = hasConflict\n  ? `You already have events at that time:\\n\\n${conflictLines.join(\"\\n\")}\\n\\nDo you want me to replace those events with this new one, or choose another time?`\n  : null;\n\nreturn [\n  {\n    json: {\n      ...($json || {}),\n      hasConflict,\n      conflictMessage,\n      conflictingEvents: events.map(item => item.json)\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2096,
+        1120
+      ],
+      "id": "264992a4-751e-4229-a337-1b5f021ab9f3",
+      "name": "Text normalisation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json.output || {};\nconst message = ($json.chatInput || \"\").toLowerCase();\n\nconst hasNewTime =\n  !!data.start_datetime ||\n  !!data.new_start_datetime ||\n  /\\b(today|tomorrow|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|\\d{1,2}(:\\d{2})?\\s?(am|pm)?)\\b/.test(message);\n\nif (\n  data.intent === \"reschedule\" &&\n  $json.pending_action === \"replace_conflicts_decision\" &&\n  hasNewTime\n) {\n  data.intent = \"booking\";\n  data.confirmed = false;\n  data.needs_clarification = false;\n  data.clarification_question = null;\n}\n\nreturn [\n  {\n    json: {\n      ...$json,\n      output: data\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        -240
+      ],
+      "id": "d2d701ad-2a32-4426-888f-57a78b10c929",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1952,
+        1120
+      ],
+      "id": "0ec4187f-6365-4fba-950c-b4f33cb59af1",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "start": "={{ $('Switch').item.json.output.start_datetime }}",
+        "end": "={{ $('Switch').item.json.output.end_datetime }}",
+        "additionalFields": {
+          "summary": "={{ $('Switch').item.json.output.title }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2416,
+        1200
+      ],
+      "id": "e877d7d9-3f1b-4364-a1cc-17791ff1b43e",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Booking\n",
+        "height": 336,
+        "width": 1072
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        1040
+      ],
+      "id": "f424545a-5b15-44f9-a620-c65445075f95",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.sessionId }}",
+        "text": "=Booked: {{ $('Switch').item.json.output.title }} on {{ DateTime.fromISO($('Switch').item.json.output.start_datetime).setZone('America/Edmonton').toFormat('MMMM d, h:mm a') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2576,
+        1200
+      ],
+      "id": "1fc2f9a8-13ca-4e7b-8c49-6c9602b0ddb4",
+      "name": "Boking Conformation text",
+      "webhookId": "3e73a572-3f93-43a2-b81a-bed2a1b875e6",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = items\n  .filter(item => {\n    const event = item.json || {};\n    return event.id && event.start && event.end;\n  })\n  .sort((a, b) => {\n    const aStart = a.json.start?.dateTime || a.json.start?.date || \"\";\n    const bStart = b.json.start?.dateTime || b.json.start?.date || \"\";\n    return aStart.localeCompare(bStart);\n  });\n\nconst eventIds = events.map(item => item.json.id);\n\nlet matchStatus = \"none\";\n\nif (events.length === 1) {\n  matchStatus = \"single\";\n}\n\nif (events.length > 1) {\n  matchStatus = \"multiple\";\n}\n\nconst formatTime = (dateString) => {\n  if (!dateString) return \"unknown time\";\n\n  return DateTime\n    .fromISO(dateString)\n    .setZone(\"America/Edmonton\")\n    .toFormat(\"h:mm a\");\n};\n\nconst conflictLines = events.map((item, index) => {\n  const event = item.json;\n  const title = event.summary || \"No title\";\n\n  const start = event.start?.dateTime || event.start?.date || \"\";\n  const end = event.end?.dateTime || event.end?.date || \"\";\n\n  const startTime = start.includes(\"T\") ? formatTime(start) : \"All day\";\n  const endTime = end.includes(\"T\") ? formatTime(end) : \"\";\n\n  return endTime\n    ? `${index + 1}) ${startTime} - ${endTime} | ${title}`\n    : `${index + 1}) ${startTime} | ${title}`;\n});\n\nreturn [{\n  json: {\n    ...$('Switch').item.json.output,\n\n    match_count: events.length,\n    match_status: matchStatus,\n    event_ids_to_delete: eventIds,\n    event_id_to_delete: eventIds[0] || null,\n    found_events: events.map(item => item.json),\n\n    conflict_message: events.length > 1\n      ? `I found more than one event in that time:\\n\\n${conflictLines.join(\"\\n\")}\\n\\nDo you want me to remove these events and create the new one?`\n      : null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        352
+      ],
+      "id": "1b3a7246-0c90-4ecc-8a8f-e8d82e48af1c",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "e38d3da0-ab59-45df-9877-fdbb9474c42a",
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "single",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "single"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "029bcd62-035a-4235-8da9-16544fed63d4",
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "multiple",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "multiple"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6b37d5c3-fda3-4cbd-ba5b-f359f10b60d1",
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "none",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "none"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2288,
+        336
+      ],
+      "id": "990a2da6-6289-4c60-a6d5-dbec48d1a237",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "timeMin": "={{ $json.output.original_datetime || $json.output.new_start_datetime }}",
+        "timeMax": "={{ $json.output.new_end_datetime }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1984,
+        352
+      ],
+      "id": "e6ee14e7-3cc0-4d24-93bb-0082a5190859",
+      "name": "Schedule check Recshedule",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "eventId": "={{ $json.event_id_to_delete }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2448,
+        256
+      ],
+      "id": "7f88f9ea-1200-4d8b-a37a-9d0549caa2e1",
+      "name": "Delete an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "start": "={{ $('Switch1').item.json.new_start_datetime }}",
+        "end": "={{ $('Switch1').item.json.new_end_datetime }}",
+        "additionalFields": {
+          "summary": "={{ $('Switch1').item.json.title }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2592,
+        256
+      ],
+      "id": "f7dcd7f4-6a6c-441b-8b4d-6fb1a8a2bf72",
+      "name": "Create an event1",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.sessionId }}",
+        "text": "=Rescheduled: {{ $('Switch1').item.json.title }} on {{ DateTime.fromISO($('Switch1').item.json.new_start_datetime).setZone('America/Edmonton').toFormat('MMMM d, h:mm a') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2736,
+        256
+      ],
+      "id": "41680a55-d447-4891-9258-0a67ba04d4b9",
+      "name": "Send a text message",
+      "webhookId": "835715a3-1934-4558-91a5-0dd970db7c80",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.sessionId }}",
+        "text": "=I couldn’t find that event. Which event do you want to reschedule?",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2448,
+        592
+      ],
+      "id": "623d189f-8ff4-4460-80cd-390ea0d2d79e",
+      "name": "Send a text message2",
+      "webhookId": "835715a3-1934-4558-91a5-0dd970db7c80",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "pending_action": "replace_conflicts_decision",
+            "title": "={{ $('Switch1').item.json.title }}",
+            "start_datetime": "={{ $('Switch1').item.json.new_start_datetime || $('Switch1').item.json.start_datetime }}",
+            "end_datetime": "={{ $('Switch1').item.json.new_end_datetime || $('Switch1').item.json.end_datetime }}",
+            "conflicting_event_ids": "={{ JSON.stringify($('Switch1').item.json.event_ids_to_delete) }}",
+            "status": "waiting_for_user",
+            "created_at": "={{ $now.setZone('America/Edmonton').toISO() }}",
+            "sessionId": "={{ $('Merge').item.json.sessionId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pending_action",
+              "displayName": "pending_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "start_datetime",
+              "displayName": "start_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "end_datetime",
+              "displayName": "end_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "conflicting_event_ids",
+              "displayName": "conflicting_event_ids",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2608,
+        432
+      ],
+      "id": "4d7070fa-4e15-41bd-9176-eacebd4ab371",
+      "name": "Conflict Add event1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.sessionId }}",
+        "text": "=I found more than one event in that time:\n\n{{ $('Switch1').item.json.found_events.map((e, i) => `${i + 1}) ${DateTime.fromISO(e.start.dateTime).setZone('America/Edmonton').toFormat('h:mm a')} - ${DateTime.fromISO(e.end.dateTime).setZone('America/Edmonton').toFormat('h:mm a')} | ${e.summary || 'No title'}`).join('\\n') }}\n\nDo you want me to remove these events and create the new one?",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2736,
+        432
+      ],
+      "id": "495f7051-e8fa-461a-9a93-284bf76dc6e2",
+      "name": "Send a text message3",
+      "webhookId": "835715a3-1934-4558-91a5-0dd970db7c80",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "004707c4-91a0-4fd2-a636-1719699f4283",
+              "leftValue": "={{ $json.output.confirmed }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1744,
+        336
+      ],
+      "id": "b9e70dd7-a9c4-43bb-97b3-75f150de6b51",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const pending = $('Conflict Memory').item.json;\n\nconst eventIds = JSON.parse(pending.conflicting_event_ids || \"[]\");\n\nreturn eventIds.map(eventId => ({\n  json: {\n    event_id_to_delete: eventId,\n\n    title: pending.title,\n    start_datetime: pending.start_datetime,\n    end_datetime: pending.end_datetime,\n\n    new_start_datetime: pending.start_datetime,\n    new_end_datetime: pending.end_datetime,\n\n    pending_action: pending.pending_action,\n    sessionId: pending.sessionId,\n    pending_row_id: pending.id\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        64
+      ],
+      "id": "46bbcc5b-9870-4840-9915-03fd55c66fe8",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sessionId",
+              "keyValue": "={{ $('Merge').item.json.sessionId }}"
+            },
+            {
+              "keyName": "status",
+              "keyValue": "waiting_for_user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2448,
+        432
+      ],
+      "id": "b3ea5b52-bc35-4b9e-a606-810caf0ed4d1",
+      "name": "Delete row(s)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "eventId": "={{ $json.event_id_to_delete }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2128,
+        64
+      ],
+      "id": "970818f4-31ae-4470-b107-6d3e6d2dc9bd",
+      "name": "Delete an event1",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const first = $('Code1').first().json;\n\nreturn [\n  {\n    json: {\n      title: first.title,\n      start_datetime: first.start_datetime,\n      end_datetime: first.end_datetime,\n      new_start_datetime: first.new_start_datetime,\n      new_end_datetime: first.new_end_datetime,\n      sessionId: first.sessionId,\n      pending_action: first.pending_action,\n      pending_row_id: first.pending_row_id\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        64
+      ],
+      "id": "535a079e-512e-40a0-b9b0-6929dab784f5",
+      "name": "Prepare one create item"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "start": "={{ $json.new_start_datetime }}",
+        "end": "={{ $json.new_end_datetime }}",
+        "additionalFields": {
+          "summary": "={{ $json.title }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2448,
+        64
+      ],
+      "id": "5c515bf0-5921-46b9-9039-89a394753679",
+      "name": "Create an event2",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Merge').item.json.message.chat.id }}",
+        "text": "=Rescheduled: {{ $json.summary }} on {{ DateTime.fromISO($json.start.dateTime).setZone('America/Edmonton').toFormat('MMMM d, h:mm a') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2608,
+        64
+      ],
+      "id": "bc0a485e-4c78-4752-ad80-de0e952382a8",
+      "name": "Send a text message4",
+      "webhookId": "cb600c75-748b-4bda-97b6-bee25aa78f66",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Prepare one create item').item.json.pending_row_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2752,
+        64
+      ],
+      "id": "ca268141-32dc-4ec7-948f-57c1695f9a42",
+      "name": "Delete row(s)1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "content": "Reschedule",
+        "height": 752,
+        "width": 1312,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        0
+      ],
+      "id": "b4f41734-2231-4ece-bb1f-377547104dd5",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        -224
+      ],
+      "id": "224f1597-7cdb-4e0e-af6e-ae85be75b3cc",
+      "name": "Telegram Trigger",
+      "webhookId": "baa21dbe-9a5f-415b-a25b-af960302baa2",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "timeMin": "={{ $json.cancel_start_datetime || $now.setZone('America/Edmonton').startOf('day').toISO() }}",
+        "timeMax": "={{ $json.cancel_start_datetime ? DateTime.fromISO($json.cancel_start_datetime).plus({ hours: 2 }).toISO() : $now.setZone('America/Edmonton').endOf('day').toISO() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2144,
+        -256
+      ],
+      "id": "465f53a9-76de-4a62-80dd-b08622a9ca20",
+      "name": "Schedule check2",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Normalize Cancel Request').first().json;\n\nconst searchText = (source.cancel_search_text || \"\").toLowerCase();\nconst sessionId = source.sessionId;\nconst cancelStartDatetime = source.cancel_start_datetime;\n\nconst events = items\n  .filter(item => {\n    const event = item.json || {};\n    return event.id && event.start && event.end;\n  })\n  .filter(item => {\n    if (!searchText) return true;\n\n    const title = (item.json.summary || \"\").toLowerCase();\n    return title.includes(searchText);\n  })\n  .sort((a, b) => {\n    const aStart = a.json.start?.dateTime || a.json.start?.date || \"\";\n    const bStart = b.json.start?.dateTime || b.json.start?.date || \"\";\n    return aStart.localeCompare(bStart);\n  });\n\nconst eventIds = events.map(item => item.json.id);\n\nlet matchStatus = \"none\";\nif (events.length === 1) matchStatus = \"single\";\nif (events.length > 1) matchStatus = \"multiple\";\n\nconst lines = events.map((item, index) => {\n  const event = item.json;\n  const title = event.summary || \"No title\";\n  const start = event.start?.dateTime || event.start?.date || \"\";\n  const end = event.end?.dateTime || event.end?.date || \"\";\n\n  const startTime = start.includes(\"T\")\n    ? DateTime.fromISO(start).setZone(\"America/Edmonton\").toFormat(\"h:mm a\")\n    : \"All day\";\n\n  const endTime = end.includes(\"T\")\n    ? DateTime.fromISO(end).setZone(\"America/Edmonton\").toFormat(\"h:mm a\")\n    : \"\";\n\n  return `${index + 1}) ${startTime} - ${endTime} | ${title}`;\n});\n\nreturn [{\n  json: {\n    ...source,\n    match_count: events.length,\n    match_status: matchStatus,\n    event_ids_to_delete: eventIds,\n    event_id_to_delete: eventIds[0] || null,\n    found_events: events.map(item => item.json),\n    cancel_options_message: lines.join(\"\\n\"),\n    sessionId,\n    cancel_start_datetime: cancelStartDatetime\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        -256
+      ],
+      "id": "1bfde710-fbf7-448f-a679-d2d5091f26e2",
+      "name": "Filter cancel matches"
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $json.output || {};\n\nreturn [\n  {\n    json: {\n      ...$json,\n      cancel_search_text: output.event_search_text || null,\n      cancel_start_datetime: output.original_datetime || null,\n      sessionId: $json.sessionId || $('Merge').item.json.sessionId\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        -256
+      ],
+      "id": "04e4787e-ad8a-4886-b1d3-27afdb1b4daa",
+      "name": "Normalize Cancel Request"
+    },
+    {
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sessionId",
+              "keyValue": "={{ $json.sessionId }}"
+            },
+            {
+              "keyName": "status",
+              "keyValue": "waiting_for_user"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2496,
+        -256
+      ],
+      "id": "911dd155-0a97-48e5-83f1-55cc770ba5ab",
+      "name": "Delete row(s)2",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "pending_action": "confirm_cancel",
+            "title": "={{ $('Filter cancel matches').first().json.found_events[0].summary }}",
+            "start_datetime": "={{ $('Filter cancel matches').first().json.found_events[0].start.dateTime }}",
+            "end_datetime": "={{ $('Filter cancel matches').first().json.found_events[0].end.dateTime }}",
+            "target_event_id": "={{ $('Filter cancel matches').first().json.event_id_to_delete }}",
+            "status": "waiting_for_user",
+            "created_at": "={{ $now.setZone('America/Edmonton').toISO() }}",
+            "pending_message_type": "confirm_delete_single",
+            "sessionId": "={{ $('Filter cancel matches').first().json.sessionId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pending_action",
+              "displayName": "pending_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "start_datetime",
+              "displayName": "start_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "end_datetime",
+              "displayName": "end_datetime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "conflicting_event_ids",
+              "displayName": "conflicting_event_ids",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "candidate_event_ids",
+              "displayName": "candidate_event_ids",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "target_event_id",
+              "displayName": "target_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "pending_message_type",
+              "displayName": "pending_message_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2656,
+        -256
+      ],
+      "id": "e0aaa605-4114-48c6-bc77-4f94ccaa89cb",
+      "name": "Insert row"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.sessionId }}",
+        "text": "=I found this event:  {{ DateTime.fromISO($json.start_datetime).setZone('America/Edmonton').toFormat('MMMM d, h:mm a') }} - {{ DateTime.fromISO($json.end_datetime).setZone('America/Edmonton').toFormat('h:mm a') }} | {{ $json.title }}  Do you want me to delete it?",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2816,
+        -256
+      ],
+      "id": "f9cff28f-4392-4ee8-8a4b-b1f36154e8ea",
+      "name": "Send a text message5",
+      "webhookId": "05502b4d-a07a-457a-8f8d-de523da60d24",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "dc04b7aa-b81e-4d97-86fa-802b97076756",
+              "leftValue": "={{ $json.output.confirmed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1760,
+        -400
+      ],
+      "id": "371c8965-8769-4424-8e22-a3282aaef45f",
+      "name": "IF Confirmed Cancel"
+    },
+    {
+      "parameters": {
+        "jsCode": "const pending = $('Conflict Memory').item.json;\n\nreturn [\n  {\n    json: {\n      event_id_to_delete: pending.target_event_id,\n      title: pending.title,\n      start_datetime: pending.start_datetime,\n      end_datetime: pending.end_datetime,\n      sessionId: pending.sessionId,\n      pending_action: pending.pending_action,\n      pending_row_id: pending.id\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1968,
+        -496
+      ],
+      "id": "99f25e19-1a8a-4f76-af2f-a6275a9b8c6d",
+      "name": "Prepare Confirm Cancel Delete"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "b09ecf37267276d6ef7c4755fde03c49036520de7aa9f1aa4c7ecb07cf843585@group.calendar.google.com",
+          "mode": "list",
+          "cachedResultName": "Learn"
+        },
+        "eventId": "={{ $json.event_id_to_delete }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2144,
+        -496
+      ],
+      "id": "cb82ab2d-9c65-4604-91de-612544e027ec",
+      "name": "Delete an event2",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "BwDbJv96Ka2XrPd3",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "value": "f1YPXaxkPKvyZUoh",
+          "mode": "list",
+          "cachedResultName": "pending_calendar_actions",
+          "cachedResultUrl": "/projects/LcET4Iel4fBY75sK/datatables/f1YPXaxkPKvyZUoh"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Prepare Confirm Cancel Delete').first().json.pending_row_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2320,
+        -496
+      ],
+      "id": "21b2e2ad-47fb-4ef1-aed0-671006d4edee",
+      "name": "Delete row(s)3",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Prepare Confirm Cancel Delete').first().json.sessionId }}",
+        "text": "=Deleted: {{ $('Prepare Confirm Cancel Delete').first().json.title }} on {{ DateTime.fromISO($('Prepare Confirm Cancel Delete').first().json.start_datetime).setZone('America/Edmonton').toFormat('MMMM d, h:mm a') }}.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2496,
+        -496
+      ],
+      "id": "41820b34-df5b-4c37-b8d3-a219740b3803",
+      "name": "Send a text message6",
+      "webhookId": "334d427d-decf-4bde-bfcc-c6d3a79bba1b",
+      "credentials": {
+        "telegramApi": {
+          "id": "Xanb2HaPmxsCmVuO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Canceling",
+        "height": 480,
+        "width": 1296,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        -544
+      ],
+      "id": "34032ca0-228f-42bd-a953-6a6c99374669",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7fca2d9f-eb7f-4e6d-886a-d2a772d592aa",
+              "name": "pending_context",
+              "value": "={{\n$json.pending_action\n  ? `The workflow is waiting for the user to respond to a pending calendar action.\n\nPending action: ${$json.pending_action}\n\nSaved event/request details:\nTitle: ${$json.title || 'not provided'}\nStart: ${$json.start_datetime || 'not provided'}\nEnd: ${$json.end_datetime || 'not provided'}\nTarget event ID: ${$json.target_event_id || 'not provided'}\nConflicting event IDs: ${$json.conflicting_event_ids || 'not provided'}\nCandidate event IDs: ${$json.candidate_event_ids || 'not provided'}\n\nLatest user reply:\n${$json.chatInput || ''}\n\nClassify the latest user reply in relation to this pending action.`\n  : null\n}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        608,
+        -240
+      ],
+      "id": "ccff5215-0bae-4e25-b34f-97a5bc73b7ee",
+      "name": "Build Pending Context"
+    }
+  ],
+  "pinData": {
+    "Telegram Trigger": [
+      {
+        "json": {
+          "update_id": 708873197,
+          "message": {
+            "message_id": 300,
+            "from": {
+              "id": 994586134,
+              "is_bot": false,
+              "first_name": "Dmitriy",
+              "language_code": "en"
+            },
+            "chat": {
+              "id": 994586134,
+              "first_name": "Dmitriy",
+              "type": "private"
+            },
+            "date": 1777920019,
+            "text": "no"
+          }
+        }
+      }
+    ],
+    "Build Pending Context": [
+      {
+        "json": {
+          "pending_action": "confirm_cancel",
+          "title": "Diner",
+          "start_datetime": "2026-05-04T20:00:00-06:00",
+          "end_datetime": "2026-05-04T20:45:00-06:00",
+          "conflicting_event_ids": null,
+          "status": "waiting_for_user",
+          "created_at": "2026-05-04T17:24:17.903-06:00",
+          "sessionId": "994586134",
+          "candidate_event_ids": null,
+          "target_event_id": "3v8t275pofovle59rg9779oje8",
+          "pending_message_type": "confirm_delete_single",
+          "id": 1,
+          "createdAt": "2026-05-04T23:24:17.908Z",
+          "updatedAt": "2026-05-04T23:24:17.908Z",
+          "update_id": 708873197,
+          "message": {
+            "message_id": 300,
+            "from": {
+              "id": 994586134,
+              "is_bot": false,
+              "first_name": "Dmitriy",
+              "language_code": "en"
+            },
+            "chat": {
+              "id": 994586134,
+              "first_name": "Dmitriy",
+              "type": "private"
+            },
+            "date": 1777920019,
+            "text": "no"
+          },
+          "chatInput": "no",
+          "pending_context": "The workflow is waiting for the user to respond to a pending calendar action.\n\n\n\nPending action: confirm_cancel\n\n\n\nSaved event/request details:\n\nTitle: Diner\n\nStart: 2026-05-04T20:00:00-06:00\n\nEnd: 2026-05-04T20:45:00-06:00\n\nTarget event ID: 3v8t275pofovle59rg9779oje8\n\nConflicting event IDs: not provided\n\nCandidate event IDs: not provided\n\n\n\nLatest user reply:\n\n no\n\n\n\nClassify the latest user reply in relation to this pending action."
+        },
+        "binary": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Conflict Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Clarification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Confirmed Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Schedule check1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule check": {
+      "main": [
+        [
+          {
+            "node": "Create message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create message": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule check1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Build Pending Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Memory": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Add event": {
+      "main": [
+        [
+          {
+            "node": "Send question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send question": {
+      "main": [
+        []
+      ]
+    },
+    "If overlap in schedule": {
+      "main": [
+        [
+          {
+            "node": "Conflict Add event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text normalisation": {
+      "main": [
+        [
+          {
+            "node": "If overlap in schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Text normalisation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event": {
+      "main": [
+        [
+          {
+            "node": "Boking Conformation text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Boking Conformation text": {
+      "main": [
+        []
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule check Recshedule": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Delete an event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete an event": {
+      "main": [
+        [
+          {
+            "node": "Create an event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Add event1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule check Recshedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete row(s)": {
+      "main": [
+        [
+          {
+            "node": "Conflict Add event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Delete an event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete an event1": {
+      "main": [
+        [
+          {
+            "node": "Prepare one create item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare one create item": {
+      "main": [
+        [
+          {
+            "node": "Create an event2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event2": {
+      "main": [
+        [
+          {
+            "node": "Send a text message4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message4": {
+      "main": [
+        [
+          {
+            "node": "Delete row(s)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule check2": {
+      "main": [
+        [
+          {
+            "node": "Filter cancel matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Cancel Request": {
+      "main": [
+        [
+          {
+            "node": "Schedule check2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter cancel matches": {
+      "main": [
+        [
+          {
+            "node": "Delete row(s)2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete row(s)2": {
+      "main": [
+        [
+          {
+            "node": "Insert row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert row": {
+      "main": [
+        [
+          {
+            "node": "Send a text message5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Confirmed Cancel": {
+      "main": [
+        [
+          {
+            "node": "Prepare Confirm Cancel Delete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Cancel Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Confirm Cancel Delete": {
+      "main": [
+        [
+          {
+            "node": "Delete an event2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete an event2": {
+      "main": [
+        [
+          {
+            "node": "Delete row(s)3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete row(s)3": {
+      "main": [
+        [
+          {
+            "node": "Send a text message6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pending Context": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8b3ed8c9-3cca-48cd-9c05-feef7e7a530f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ba1f0a11c0f974e7110d42535bd61324baaf0622961887f42ed707598f62598c"
+  },
+  "id": "p0uYhNIiNs7AoTwZ",
+  "tags": []
+}
