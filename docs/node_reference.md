@@ -50,7 +50,7 @@ Send a text message6
 
 ## Cancel Single Confirmation Path
 
-Built:
+Built and tested:
 
 ```text
 Main Switch: cancel
@@ -63,9 +63,9 @@ FALSE path:
 Normalize Cancel Request
 -> Schedule check2
 -> Filter cancel matches
--> Delete old waiting rows
+-> Delete row(s)2
 -> Insert row pending_action = confirm_cancel
--> Telegram confirmation question
+-> Send a text message5
 ```
 
 TRUE path:
@@ -75,6 +75,26 @@ Prepare Confirm Cancel Delete
 -> Delete Event
 -> Delete pending row
 -> Telegram deleted confirmation
+```
+
+## Planned Cancel Switch
+
+The real Cancel Switch node is not built yet in the JSON export.
+
+Current condition:
+
+```text
+Filter cancel matches
+-> Delete row(s)2
+-> Insert row
+-> Send a text message5
+```
+
+Next build step:
+
+```text
+Add real Cancel Switch with single / multiple / none.
+Then connect the none path first.
 ```
 
 ## Cancel Work Not Fully Built

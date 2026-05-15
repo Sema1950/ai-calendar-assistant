@@ -35,9 +35,9 @@ FALSE path:
 Normalize Cancel Request
 -> Schedule check2
 -> Filter cancel matches
--> Delete old waiting rows
+-> Delete row(s)2
 -> Insert row pending_action = confirm_cancel
--> Telegram confirmation question
+-> Send a text message5
 ```
 
 TRUE path:
@@ -61,7 +61,7 @@ calendar error handling
 
 ## Recommended Next Build Step
 
-Build the **Cancel none path first**:
+Add a real **Cancel Switch** with `single / multiple / none`, then build the **Cancel none path first**:
 
 ```text
 Cancel Switch: none

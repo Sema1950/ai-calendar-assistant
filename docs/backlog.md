@@ -12,7 +12,7 @@ This document lists what still needs to be built, tested, cleaned, and improved.
 
 Finish the **cancel branch**.
 
-The cancel branch is partially built but not complete. The next recommended build step is the **Cancel none path first**.
+The cancel branch is partially built but not complete. The next recommended build step is to add a real **Cancel Switch** with `single / multiple / none`, then connect the **none path first**.
 
 ## Completed: Build Pending Context Before AI Agent
 
@@ -60,10 +60,12 @@ Main Switch: cancel
 → FALSE: Normalize Cancel Request
 → Schedule check2
 → Filter cancel matches
-→ single path built
+→ Delete row(s)2
+→ Insert row pending_action = confirm_cancel
+→ Telegram confirmation question
 ```
 
-The cancel Switch should route by:
+The real Cancel Switch is not built yet in the JSON export. It should be built next and route by:
 
 ```text
 {{ $json.match_status }}
@@ -86,7 +88,7 @@ If no matching event is found, tell the user clearly.
 ### Required Flow
 
 ```text
-Switch: none
+Cancel Switch: none
 → Telegram: Send Message
 → STOP
 ```
@@ -114,7 +116,7 @@ If exactly one matching event is found, the current workflow asks for confirmati
 ### Built Flow
 
 ```text
-Switch: single
+Filter cancel matches
 → Data Table: Delete old waiting rows for this session
 → Data Table: Insert row
 → Telegram: Send confirmation question
@@ -786,7 +788,7 @@ Continue from the cancel branch.
 Next build:
 
 ```text
-Cancel none path first.
+Add real Cancel Switch with single / multiple / none, then connect the none path first.
 ```
 
 
@@ -817,7 +819,7 @@ Current remaining cancel work:
 Recommended next action:
 
 ```text
-Build Cancel none path first because it is simple:
+Add real Cancel Switch with single / multiple / none, then build Cancel none path first:
 Cancel Switch: none
 → Telegram: I couldn’t find any event matching that request.
 → STOP

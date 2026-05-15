@@ -181,7 +181,9 @@ cancel
 → IF Confirmed Cancel
 ```
 
-### Cancel Switch Outputs
+### Planned Cancel Switch Outputs
+
+The real Cancel Switch node is not built yet in the JSON export. Current cancel single confirmation is wired directly after `Filter cancel matches`.
 
 ```text
 single
@@ -201,13 +203,17 @@ Status: not fully built yet.
 
 ### Cancel Single
 
+Current direct path after `Filter cancel matches`:
+
 ```text
-single
-→ Data Table: Delete old waiting rows
-→ Data Table: Insert row pending_action = confirm_cancel
-→ Telegram: Confirm delete?
+Filter cancel matches
+→ Delete row(s)2
+→ Insert row pending_action = confirm_cancel
+→ Send a text message5
 → STOP
 ```
+
+Status: built and tested.
 
 ### Cancel Multiple
 
@@ -233,7 +239,7 @@ Telegram reply yes
 → STOP
 ```
 
-Status: not fully built yet.
+Status: built and tested.
 
 ### Cancel Select Target
 
@@ -316,9 +322,11 @@ FALSE path — new cancel request:
 ```text
 IF false
 → Code: Normalize Cancel Request
-→ Google Calendar: Get Many
-→ Code: Filter Cancel Matches
-→ Cancel Switch
+→ Google Calendar: Schedule check2
+→ Code: Filter cancel matches
+→ Delete row(s)2
+→ Insert row pending_action = confirm_cancel
+→ Send a text message5
 ```
 
 TRUE path — user confirmed existing cancel request:
@@ -335,7 +343,7 @@ IF true
 ### Cancel Single — completed
 
 ```text
-Cancel Switch: single
+Filter cancel matches
 → Data Table: Delete old waiting rows
 → Data Table: Insert row pending_action = confirm_cancel
 → Telegram: Confirm delete?

@@ -909,7 +909,9 @@ IF false
 → Normalize Cancel Request
 → Schedule check2
 → Filter cancel matches
-→ Cancel Switch
+→ Delete row(s)2
+→ Insert row pending_action = confirm_cancel
+→ Telegram confirmation question
 ```
 
 ### Normalize Cancel Request
@@ -975,7 +977,18 @@ none
 
 ### Cancel Switch
 
-Routes by:
+Planned. The real Cancel Switch node is not built yet in the JSON export.
+
+Current condition: after `Filter cancel matches`, the workflow is wired directly into the single cancel confirmation path:
+
+```text
+Filter cancel matches
+→ Delete row(s)2
+→ Insert row
+→ Send a text message5
+```
+
+The planned Cancel Switch should route by:
 
 ```text
 {{ $json.match_status }}
@@ -989,7 +1002,7 @@ multiple
 none
 ```
 
-Status: single confirmation path is built; none and multiple paths are not fully built yet.
+Status: next to build. After it exists, connect the none path first.
 
 ### Cancel None Path
 

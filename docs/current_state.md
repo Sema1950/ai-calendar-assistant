@@ -740,7 +740,9 @@ IF false
 → Code: Normalize Cancel Request
 → Google Calendar: Schedule check2
 → Code: Filter cancel matches
-→ Cancel Switch
+→ Delete row(s)2
+→ Insert row pending_action = confirm_cancel
+→ Telegram: Confirm delete?
 ```
 
 ### Cancel Normalize Code
@@ -784,11 +786,20 @@ found_events
 cancel_options_message
 ```
 
-### Cancel Switch
+### Planned Cancel Switch
 
-Partially built. The single path is built; none and multiple paths are not fully built yet.
+Not built yet as a real node in the JSON export.
 
-Routing:
+Current condition: after `Filter cancel matches`, the workflow is wired directly into the single cancel confirmation path:
+
+```text
+Filter cancel matches
+→ Delete row(s)2
+→ Insert row
+→ Send a text message5
+```
+
+The real Cancel Switch still needs to be added and should route by:
 
 ```text
 single
@@ -887,10 +898,8 @@ FALSE path for a new cancel request:
 ```text
 IF false
 → Code: Normalize Cancel Request
-→ Google Calendar: Get Many
-→ Code: Filter Cancel Matches
-→ Cancel Switch
-→ single
+→ Google Calendar: Schedule check2
+→ Code: Filter cancel matches
 → Data Table: Delete old waiting rows
 → Data Table: Insert row pending_action = confirm_cancel
 → Telegram: Confirm delete?
@@ -945,4 +954,4 @@ fallback branch
 - Data Table remains the source of truth.
 - AI Agent interprets the user reply with the extra context.
 - Code/IF nodes still protect destructive actions such as delete and replace.
-- Next practical build step: build the cancel none path first.
+- Next practical build step: add the real Cancel Switch with `single / multiple / none`, then connect the none path first.
