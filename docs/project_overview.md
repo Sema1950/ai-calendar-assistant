@@ -1,5 +1,7 @@
 # Project Overview
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Project Name
 
 AI Scheduler — n8n Telegram Calendar Automation
@@ -80,7 +82,9 @@ Telegram Trigger
 → Edit Fields
 → Data Table: Get row(s)
 → Merge
+→ Build Pending Context
 → AI Agent
+→ Structured Output Parser
 → Code in JavaScript
 → Main Switch
 → Specialist branch
@@ -108,6 +112,7 @@ It receives:
 - Session ID
 - Current datetime
 - Pending state from Data Table
+- Pending context from `Build Pending Context`
 - Simple Memory context
 
 It outputs structured data with fields such as:

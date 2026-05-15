@@ -1,5 +1,7 @@
 # Bugs and Fixes
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Project
 
 AI Scheduler — n8n Telegram Calendar Automation

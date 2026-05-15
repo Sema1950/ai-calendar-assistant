@@ -1,5 +1,7 @@
 # Workflow Map
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Main Flow
 
 ```text
@@ -7,6 +9,7 @@ Telegram Trigger
 → Edit Fields
 → Data Table: Get row(s) / Conflict Memory
 → Merge
+→ Build Pending Context
 → AI Agent
 → Structured Output Parser
 → Code in JavaScript
@@ -79,6 +82,7 @@ Telegram Trigger
 → Edit Fields
 → Conflict Memory
 → Merge
+→ Build Pending Context
 → AI Agent
 → Code in JavaScript
 → Main Switch: reschedule
@@ -174,10 +178,7 @@ Current target map:
 
 ```text
 cancel
-→ Code: Normalize cancel request
-→ Google Calendar: Get Many
-→ Code: Filter cancel matches
-→ Cancel Switch
+→ IF Confirmed Cancel
 ```
 
 ### Cancel Switch Outputs
@@ -195,6 +196,8 @@ none
 → Telegram: No events found
 → STOP
 ```
+
+Status: not fully built yet.
 
 ### Cancel Single
 
@@ -216,6 +219,8 @@ multiple
 → STOP
 ```
 
+Status: not fully built yet.
+
 ### Cancel Confirm Single
 
 ```text
@@ -227,6 +232,8 @@ Telegram reply yes
 → Data Table: Delete pending row
 → STOP
 ```
+
+Status: not fully built yet.
 
 ### Cancel Select Target
 

@@ -1,5 +1,7 @@
 # Backlog
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Project
 
 AI Scheduler — n8n Telegram Calendar Automation
@@ -10,15 +12,15 @@ This document lists what still needs to be built, tested, cleaned, and improved.
 
 Finish the **cancel branch**.
 
-The cancel branch is partially built but not complete.
+The cancel branch is partially built but not complete. The next recommended build step is the **Cancel none path first**.
 
-## Add Pending Context Before AI Agent
+## Completed: Build Pending Context Before AI Agent
 
-### Goal
+`Build Pending Context` is complete and connected between `Merge` and `AI Agent`.
 
-Build a clear `pending_context` field before the AI Agent whenever a pending Data Table row exists.
+It builds a clear `pending_context` field whenever a pending Data Table row exists.
 
-### Required for
+Supported pending actions:
 
 ```text
 replace_conflicts_decision
@@ -44,9 +46,7 @@ no
 Classify the latest reply in relation to this pending action.
 ```
 
-### Priority
-
-Do this before continuing with more cancel edge cases.
+This is no longer the next action.
 
 ## 1. Finish Cancel Branch
 
@@ -56,10 +56,11 @@ Already started:
 
 ```text
 Main Switch: cancel
-→ Code: Normalize cancel request
-→ Google Calendar: Get Many
-→ Code: Filter cancel matches
-→ Switch
+→ IF Confirmed Cancel
+→ FALSE: Normalize Cancel Request
+→ Schedule check2
+→ Filter cancel matches
+→ single path built
 ```
 
 The cancel Switch should route by:
@@ -106,13 +107,11 @@ I couldn’t find an event matching your request. Please send the event name, da
 
 No Data Table state is needed for this path right now.
 
-## 3. Cancel Branch — Single Match Path
+## 3. Completed: Cancel Branch — Single Match Path
 
-### Goal
+If exactly one matching event is found, the current workflow asks for confirmation first.
 
-If exactly one matching event is found, do not delete immediately. Ask for confirmation first.
-
-### Required Flow
+### Built Flow
 
 ```text
 Switch: single
@@ -153,26 +152,26 @@ April 24, 5:00 PM - 6:00 PM | Dinner
 Do you want me to delete it?
 ```
 
-## 4. Cancel Branch — Confirm Single Delete
+## 4. Completed: Cancel Branch — Confirm Single Delete
 
-### Goal
+When the user replies yes to a `confirm_cancel` pending action, the current workflow deletes the saved target event.
 
-When the user replies “yes” to a `confirm_cancel` pending action, delete the saved target event.
-
-### Required Flow
+### Built Flow
 
 ```text
 Telegram Trigger
 → Edit Fields
 → Data Table: Get row(s)
 → Merge
+→ Build Pending Context
 → AI Agent
 → Code in JavaScript
 → Main Switch: cancel
-→ IF pending_action = confirm_cancel AND confirmed = true
-→ Google Calendar: Delete event
+→ IF Confirmed Cancel TRUE
+→ Prepare Confirm Cancel Delete
+→ Google Calendar: Delete Event
+→ Data Table: Delete pending row by exact row ID
 → Telegram: Send deleted confirmation
-→ Data Table: Delete row(s)
 ```
 
 ### Delete Event ID
@@ -784,23 +783,10 @@ Check all IF nodes use correct field/value placement
 
 Continue from the cancel branch.
 
-Next node likely needed:
+Next build:
 
 ```text
-Cancel Switch routing:
-single
-multiple
-none
-```
-
-Then build:
-
-```text
-none path
-single confirm path
-multiple selection path
-pending confirm delete path
-pending selection delete path
+Cancel none path first.
 ```
 
 

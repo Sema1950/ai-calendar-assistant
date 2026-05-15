@@ -1,5 +1,7 @@
 # Expressions and Code
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Purpose
 
 This file stores important n8n expressions and Code node scripts used in the workflow.
@@ -79,6 +81,45 @@ return [
     }
   }
 ];
+```
+
+## Build Pending Context
+
+Placement:
+
+```text
+Merge -> Build Pending Context -> AI Agent
+```
+
+Field:
+
+```text
+pending_context
+```
+
+Expression:
+
+```javascript
+={{
+$json.pending_action
+  ? `The workflow is waiting for the user to respond to a pending calendar action.
+
+Pending action: ${$json.pending_action}
+
+Saved event/request details:
+Title: ${$json.title || 'not provided'}
+Start: ${$json.start_datetime || 'not provided'}
+End: ${$json.end_datetime || 'not provided'}
+Target event ID: ${$json.target_event_id || 'not provided'}
+Conflicting event IDs: ${$json.conflicting_event_ids || 'not provided'}
+Candidate event IDs: ${$json.candidate_event_ids || 'not provided'}
+
+Latest user reply:
+${$json.chatInput || ''}
+
+Classify the latest user reply in relation to this pending action.`
+  : null
+}}
 ```
 
 ## Show Schedule Formatting Code

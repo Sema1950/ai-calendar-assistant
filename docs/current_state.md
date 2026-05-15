@@ -1,5 +1,7 @@
 # Current State
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Project
 
 AI Scheduler — n8n Telegram Calendar Automation
@@ -14,6 +16,7 @@ The current workflow can:
 - Normalize Telegram input into fields for AI.
 - Check Data Table for pending state.
 - Merge original Telegram data with pending state.
+- Build `pending_context` before the AI Agent when a pending Data Table row exists.
 - Use one AI Agent as the scheduling-intent router.
 - Enforce structured AI output through Structured Output Parser.
 - Use a Code node after AI Agent for deterministic override logic.
@@ -36,7 +39,9 @@ Telegram Trigger
 → Edit Fields
 → Data Table: Get row(s) / Conflict Memory
 → Merge
+→ Build Pending Context
 → AI Agent
+→ Structured Output Parser
 → Code in JavaScript
 → Main Switch
 ```
@@ -101,6 +106,20 @@ Include Any Unpaired Items: ON
 
 This allows the workflow to continue even if no pending row exists.
 
+### Build Pending Context
+
+Working and connected before the AI Agent.
+
+This node adds `pending_context` when `pending_action` exists. It summarizes the pending Data Table state and latest Telegram reply so the AI Agent can classify replies to:
+
+```text
+replace_conflicts_decision
+confirm_cancel
+select_cancel_target
+```
+
+If no pending action exists, `pending_context` is null.
+
 ### AI Agent
 
 Working.
@@ -113,6 +132,7 @@ It uses:
 - Session ID
 - Current datetime
 - Pending state
+- Pending context
 - Simple Memory
 
 The AI Agent does not execute calendar actions.
@@ -593,6 +613,7 @@ Telegram Trigger
 → Edit Fields
 → Conflict Memory
 → Merge
+→ Build Pending Context
 → AI Agent
 → Code in JavaScript
 → Main Switch: reschedule
@@ -703,24 +724,23 @@ Example:
 
 ## Cancel Branch
 
-Started but not finished.
+Partially built.
 
-Current plan:
+Current entry:
 
 ```text
-cancel
-→ Code: Normalize cancel request
-→ Google Calendar: Get Many
-→ Code: Filter cancel matches
-→ Switch
+Main Switch: cancel
+→ IF Confirmed Cancel
 ```
 
-Switch outputs planned:
+FALSE path for a new cancel request:
 
 ```text
-single
-multiple
-none
+IF false
+→ Code: Normalize Cancel Request
+→ Google Calendar: Schedule check2
+→ Code: Filter cancel matches
+→ Cancel Switch
 ```
 
 ### Cancel Normalize Code
@@ -766,9 +786,9 @@ cancel_options_message
 
 ### Cancel Switch
 
-In progress.
+Partially built. The single path is built; none and multiple paths are not fully built yet.
 
-Planned routing:
+Routing:
 
 ```text
 single
@@ -797,6 +817,7 @@ The latest prompt includes:
 
 - Role
 - Runtime context
+- Pending context
 - Source-of-truth priority
 - Output schema explanation
 - Hard rules
@@ -917,12 +938,11 @@ availability branch
 fallback branch
 ```
 
-## Latest Update — Pending Context Design Decision
+## Latest Update — Build Pending Context Completed
 
-- A new design decision was made to add a `pending_context` field before the AI Agent.
-- The purpose is to make pending user replies easier for the AI Agent to classify.
-- This is especially important for cancel confirmation replies such as "no", unclear replies, and multiple-choice cancel selection.
+- `Build Pending Context` is now connected between `Merge` and `AI Agent`.
+- It creates `pending_context` when a pending Data Table action exists.
 - Data Table remains the source of truth.
-- AI Agent interprets the user reply.
-- Code/IF nodes must still protect destructive actions such as delete and replace.
-- Next practical build step: add a Code/Edit Fields node before the AI Agent to generate `pending_context` when `pending_action` exists.
+- AI Agent interprets the user reply with the extra context.
+- Code/IF nodes still protect destructive actions such as delete and replace.
+- Next practical build step: build the cancel none path first.

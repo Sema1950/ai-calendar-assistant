@@ -4,7 +4,7 @@ You are helping me build and maintain an n8n Telegram -> Google Calendar automat
 
 ## Project Source of Truth
 
-All project documentation is stored in GitHub:
+Project files are stored in GitHub:
 
 Repository:
 Sema1950/ai-calendar-assistant
@@ -12,13 +12,19 @@ Sema1950/ai-calendar-assistant
 Folder:
 /docs
 
+Current workflow implementation snapshot:
+docs/Calendar_assist.json
+
+Treat `docs/Calendar_assist.json` as the current exported n8n workflow reference. Do not edit it unless the project owner explicitly asks.
+
 ## Mandatory Startup Rule
 
 At the start of every new task or new chat, first read:
 
-1. current_state.md
-2. backlog.md
-3. workflow_map.md
+1. Calendar_assist.json
+2. current_state.md
+3. backlog.md
+4. workflow_map.md
 
 Use those files to determine:
 

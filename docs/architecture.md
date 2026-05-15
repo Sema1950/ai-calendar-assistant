@@ -1,5 +1,7 @@
 # Architecture
 
+Note: `docs/Calendar_assist.json` is the current exported n8n workflow and implementation reference. It is maintained manually by the project owner; documentation should be aligned to it, but this JSON file should not be edited as part of documentation cleanup.
+
 ## Project
 
 AI Scheduler — n8n Telegram Calendar Automation
@@ -26,6 +28,7 @@ Telegram Trigger
 → Normalize Telegram input
 → Load pending state from Data Table
 → Merge message + pending state
+→ Build pending context
 → AI Agent
 → Structured Output Parser
 → Code override / validation
@@ -890,16 +893,23 @@ id = {{ $('Prepare one create item').item.json.pending_row_id }}
 
 Safely delete calendar events.
 
-The cancel branch is in progress.
+The cancel branch is partially built.
 
-Target behavior:
+Current entry:
 
 ```text
-cancel
-→ Normalize cancel request
-→ Google Calendar: Get Many
-→ Code: Filter cancel matches
-→ Switch
+Main Switch: cancel
+→ IF Confirmed Cancel
+```
+
+FALSE path for a new cancel request:
+
+```text
+IF false
+→ Normalize Cancel Request
+→ Schedule check2
+→ Filter cancel matches
+→ Cancel Switch
 ```
 
 ### Normalize Cancel Request
@@ -963,7 +973,7 @@ multiple
 none
 ```
 
-### Planned Cancel Switch
+### Cancel Switch
 
 Routes by:
 
@@ -979,7 +989,9 @@ multiple
 none
 ```
 
-### Planned Cancel None Path
+Status: single confirmation path is built; none and multiple paths are not fully built yet.
+
+### Cancel None Path
 
 ```text
 none
@@ -992,14 +1004,17 @@ Example:
 No events found matching that request.
 ```
 
-### Planned Cancel Single Path
+Status: not fully built yet.
 
-Safer version:
+### Cancel Single Path
+
+Built safer version:
 
 ```text
 single
-→ Telegram: Confirm delete?
+→ Data Table: Delete old waiting rows
 → Data Table: Insert pending row with pending_action = confirm_cancel
+→ Telegram: Confirm delete?
 → STOP
 ```
 
@@ -1007,12 +1022,14 @@ After user confirms:
 
 ```text
 pending_action = confirm_cancel
-→ Google Calendar: Delete event
-→ Telegram: Deleted
-→ Data Table: Delete row
+→ IF Confirmed Cancel TRUE
+→ Prepare Confirm Cancel Delete
+→ Google Calendar: Delete Event
+→ Data Table: Delete pending row by exact row ID
+→ Telegram: Deleted confirmation
 ```
 
-### Planned Cancel Multiple Path
+### Cancel Multiple Path
 
 ```text
 multiple
@@ -1030,6 +1047,8 @@ pending_action = select_cancel_target
 → Telegram confirmation
 → Data Table cleanup
 ```
+
+Status: not fully built yet.
 
 ## Availability Branch
 
@@ -1158,12 +1177,11 @@ cancel
 Cancel should support:
 
 ```text
-single match confirmation
-multiple match selection
-pending confirm_cancel
-pending select_cancel_target
-safe deletion
-pending row cleanup
+cancel none path
+cancel multiple match path
+select_cancel_target reply handling
+reject delete handling
+calendar error handling
 ```
 
 
